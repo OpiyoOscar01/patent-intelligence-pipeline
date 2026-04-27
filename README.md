@@ -522,17 +522,6 @@ python visualize.py
 streamlit run dashboard.py
 ```
 
-### Alternative — Generate Outputs Directly *(no raw data required)*
-
-```bash
-# Uses existing clean_data/*.csv files
-python generate_outputs.py
-
-# Or specify custom paths
-python generate_outputs.py --input-dir path/to/clean_data --output-dir path/to/outputs
-```
-
----
 
 ## 🛠️ Low-Memory Design Strategies
 
@@ -693,7 +682,8 @@ python -c "import pandas as pd; print(pd.read_csv('outputs/top_inventors.csv').h
 |-------|---------|
 | Author | Opiyo Oscar |
 | Student No | 2300701330 |
-| Email | o.opiyo@cis.mak.ac.ug |
+| Reg No | 23/U/1330 |
+| Email | opiyo.oscar@students@mak.ac.ug |
 | Course | Cloud Computing and Big Data Analytics |
 | University | Makerere University |
 
@@ -783,4 +773,4 @@ All **13 output files** are generated in the `outputs/` directory..
 ---
 
 *Makerere University — College of Computing and Information Sciences*  
-*Cloud Computing and Big Data Analytics — 2025*
+*Cloud Computing and Big Data Analytics — 2026*
