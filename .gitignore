@@ -1,0 +1,6 @@
+venv/
+raw_data/
+clean_data/
+generate_outputs.py
+patents.db
+console_report.py
