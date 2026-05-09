@@ -1,11 +1,21 @@
-name               , patent_count
-Shunpei Yamazaki   ,         1873
-Kia Silverbrook    ,         1524
-Lowell L. Wood Jr. ,         1102
-Roderic A. Hyde    ,          987
-Paul Lapstun       ,          891
-Gurtej Singh Sandhu,          756
-Jun Koyama         ,          723
-Leonard Forbes     ,          698
-Donald E. Weder    ,          654
-Kangguo Cheng      ,          612
+name,country,patent_count
+Shunpei Yamazaki,JP,5663
+Shunpei Yamazaki,US,5663
+Kia Silverbrook,AU,3972
+Kia Silverbrook,AT,3972
+Kia Silverbrook,Unknown,3972
+Tao Luo,US,3617
+Tao Luo,KR,3617
+Tao Luo,CN,3617
+Tao Luo,FR,3617
+Tao Luo,SG,3617
+Tao Luo,Unknown,3617
+Jonathan P. Ive,US,2350
+Jonathan P. Ive,CA,2350
+Junyi Li,US,2317
+Junyi Li,CN,2317
+Junyi Li,CA,2317
+Kangguo Cheng,US,2306
+"Frederick E. Shelton, IV",US,2204
+Peter Gaal,US,2129
+Duncan Robert Kerr,US,2078

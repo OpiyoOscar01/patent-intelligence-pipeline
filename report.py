@@ -53,31 +53,26 @@ def console_report(conn):
     stats = get_summary_stats(conn)
 
     top_inventors = pd.read_sql_query("""
-        SELECT i.name, i.country, COUNT(DISTINCT r.patent_id) AS patents
-        FROM inventors i
-        JOIN patent_relationships r ON i.inventor_id = r.inventor_id
-        GROUP BY i.inventor_id
-        ORDER BY patents DESC
+        SELECT i.name, i.country, c.patent_count AS patents
+        FROM temp_inventor_counts c
+        JOIN inventors i ON c.inventor_id = i.inventor_id
+        ORDER BY c.patent_count DESC
         LIMIT 10
     """, conn)
 
     top_companies = pd.read_sql_query("""
-        SELECT c.name, COUNT(DISTINCT r.patent_id) AS patents
-        FROM companies c
-        JOIN patent_relationships r ON c.company_id = r.company_id
-        GROUP BY c.company_id
-        ORDER BY patents DESC
+        SELECT co.name, cc.patent_count AS patents
+        FROM temp_company_counts cc
+        JOIN companies co ON cc.company_id = co.company_id
+        ORDER BY cc.patent_count DESC
         LIMIT 10
     """, conn)
 
     top_countries = pd.read_sql_query("""
-        SELECT i.country, COUNT(DISTINCT r.patent_id) AS patents,
-               ROUND(100.0 * COUNT(DISTINCT r.patent_id) / (SELECT COUNT(*) FROM patents), 2) AS share
-        FROM inventors i
-        JOIN patent_relationships r ON i.inventor_id = r.inventor_id
-        WHERE i.country IS NOT NULL AND i.country != ''
-        GROUP BY i.country
-        ORDER BY patents DESC
+        SELECT country, patent_count AS patents,
+               ROUND(100.0 * patent_count / (SELECT COUNT(*) FROM patents), 2) AS share
+        FROM temp_country_counts
+        ORDER BY patent_count DESC
         LIMIT 10
     """, conn)
 
@@ -105,77 +100,154 @@ def console_report(conn):
     print("=" * 80 + "\n")
 
 
+def _ensure_temp_counts(conn):
+    """Speed up large-db exports (same pattern as analyze.py)."""
+    cur = conn.cursor()
+    cur.execute("DROP TABLE IF EXISTS temp_inventor_counts")
+    cur.execute("DROP TABLE IF EXISTS temp_company_counts")
+    cur.execute(
+        """
+        CREATE TEMP TABLE temp_inventor_counts AS
+        SELECT inventor_id, COUNT(patent_id) AS patent_count
+        FROM patent_relationships
+        GROUP BY inventor_id
+        """
+    )
+    cur.execute(
+        """
+        CREATE TEMP TABLE temp_company_counts AS
+        SELECT company_id, COUNT(patent_id) AS patent_count
+        FROM patent_relationships
+        WHERE company_id IS NOT NULL
+        GROUP BY company_id
+        """
+    )
+    cur.execute("DROP TABLE IF EXISTS patent_country_pairs")
+    cur.execute("DROP TABLE IF EXISTS temp_country_counts")
+    cur.execute(
+        """
+        CREATE TEMP TABLE patent_country_pairs AS
+        SELECT DISTINCT r.patent_id, TRIM(i.country) AS country
+        FROM patent_relationships r
+        JOIN inventors i ON r.inventor_id = i.inventor_id
+        WHERE i.country IS NOT NULL AND TRIM(i.country) != '' AND TRIM(i.country) != 'Unknown'
+        """
+    )
+    cur.execute(
+        """
+        CREATE TEMP TABLE temp_country_counts AS
+        SELECT country, COUNT(*) AS patent_count
+        FROM patent_country_pairs
+        GROUP BY country
+        """
+    )
+
+
 def export_csvs(conn):
-    """Export required CSV files."""
+    """Export required CSV files (run after _ensure_temp_counts)."""
     logger.info("Exporting CSV reports...")
     top_inventors = pd.read_sql_query("""
-        SELECT i.name, i.country, COUNT(DISTINCT r.patent_id) AS patent_count
-        FROM inventors i
-        JOIN patent_relationships r ON i.inventor_id = r.inventor_id
-        GROUP BY i.inventor_id
-        ORDER BY patent_count DESC
+        SELECT i.name, i.country, c.patent_count
+        FROM temp_inventor_counts c
+        JOIN inventors i ON c.inventor_id = i.inventor_id
+        ORDER BY c.patent_count DESC
         LIMIT 100
     """, conn)
     top_inventors.insert(0, "rank", range(1, len(top_inventors)+1))
     top_inventors.to_csv(OUTPUT_DIR / "top_inventors.csv", index=False)
 
     top_companies = pd.read_sql_query("""
-        SELECT c.name, COUNT(DISTINCT r.patent_id) AS patent_count
-        FROM companies c
-        JOIN patent_relationships r ON c.company_id = r.company_id
-        GROUP BY c.company_id
-        ORDER BY patent_count DESC
+        SELECT co.name, cc.patent_count
+        FROM temp_company_counts cc
+        JOIN companies co ON cc.company_id = co.company_id
+        ORDER BY cc.patent_count DESC
         LIMIT 50
     """, conn)
     top_companies.insert(0, "rank", range(1, len(top_companies)+1))
     top_companies.to_csv(OUTPUT_DIR / "top_companies.csv", index=False)
 
     country_trends = pd.read_sql_query("""
-        SELECT i.country, COUNT(DISTINCT r.patent_id) AS patent_count,
-               ROUND(100.0 * COUNT(DISTINCT r.patent_id) / (SELECT COUNT(*) FROM patents), 2) AS share_pct
-        FROM inventors i
-        JOIN patent_relationships r ON i.inventor_id = r.inventor_id
-        WHERE i.country IS NOT NULL AND i.country != ''
-        GROUP BY i.country
+        SELECT country, patent_count,
+               ROUND(100.0 * patent_count / (SELECT COUNT(*) FROM patents), 2) AS share_pct
+        FROM temp_country_counts
         ORDER BY patent_count DESC
     """, conn)
     country_trends.to_csv(OUTPUT_DIR / "country_trends.csv", index=False)
 
     yearly = pd.read_sql_query("SELECT year, COUNT(*) AS patent_count FROM patents WHERE year IS NOT NULL GROUP BY year ORDER BY year", conn)
     yearly.to_csv(OUTPUT_DIR / "yearly_trends.csv", index=False)
+
+    join_sample = pd.read_sql_query("""
+        SELECT p.patent_id,
+               SUBSTR(p.title, 1, 120) AS title,
+               p.year,
+               i.name AS inventor_name,
+               i.country AS inventor_country,
+               c.name AS company_name
+        FROM patents p
+        JOIN patent_relationships r ON p.patent_id = r.patent_id
+        JOIN inventors i ON r.inventor_id = i.inventor_id
+        LEFT JOIN companies c ON r.company_id = c.company_id
+        LIMIT 500
+    """, conn)
+    join_sample.to_csv(OUTPUT_DIR / "join_sample.csv", index=False)
+
+    prolific = pd.read_sql_query("""
+        SELECT i.name, c.patent_count, i.country
+        FROM temp_inventor_counts c
+        JOIN inventors i ON c.inventor_id = i.inventor_id
+        WHERE c.patent_count >= 50
+        ORDER BY c.patent_count DESC
+    """, conn)
+    prolific.to_csv(OUTPUT_DIR / "prolific_inventors.csv", index=False)
+
+    ranked = pd.read_sql_query("""
+        WITH inventor_stats AS (
+            SELECT i.country, i.name, c.patent_count
+            FROM temp_inventor_counts c
+            JOIN inventors i ON c.inventor_id = i.inventor_id
+            WHERE i.country IS NOT NULL AND TRIM(i.country) != '' AND i.country != 'Unknown'
+        ),
+        inventor_ranks AS (
+            SELECT country, name, patent_count,
+                   RANK() OVER (PARTITION BY country ORDER BY patent_count DESC) AS rank_num
+            FROM inventor_stats
+        )
+        SELECT country, name AS inventor_name, rank_num AS rank, patent_count
+        FROM inventor_ranks
+        WHERE rank_num <= 5
+        ORDER BY country, rank_num
+    """, conn)
+    ranked.to_csv(OUTPUT_DIR / "ranked_inventors_by_country.csv", index=False)
+
     logger.info("CSV exports saved in outputs/")
 
 
 def json_report(conn):
-    """Create JSON report."""
+    """Create JSON report (run after _ensure_temp_counts)."""
     stats = get_summary_stats(conn)
 
     top_inventors = pd.read_sql_query("""
-        SELECT i.name, i.country, COUNT(DISTINCT r.patent_id) AS patents
-        FROM inventors i
-        JOIN patent_relationships r ON i.inventor_id = r.inventor_id
-        GROUP BY i.inventor_id
-        ORDER BY patents DESC
+        SELECT i.name, i.country, c.patent_count AS patents
+        FROM temp_inventor_counts c
+        JOIN inventors i ON c.inventor_id = i.inventor_id
+        ORDER BY c.patent_count DESC
         LIMIT 20
     """, conn)
 
     top_companies = pd.read_sql_query("""
-        SELECT c.name, COUNT(DISTINCT r.patent_id) AS patents
-        FROM companies c
-        JOIN patent_relationships r ON c.company_id = r.company_id
-        GROUP BY c.company_id
-        ORDER BY patents DESC
+        SELECT co.name, cc.patent_count AS patents
+        FROM temp_company_counts cc
+        JOIN companies co ON cc.company_id = co.company_id
+        ORDER BY cc.patent_count DESC
         LIMIT 20
     """, conn)
 
     top_countries = pd.read_sql_query("""
-        SELECT i.country, COUNT(DISTINCT r.patent_id) AS patents,
-               ROUND(100.0 * COUNT(DISTINCT r.patent_id) / (SELECT COUNT(*) FROM patents), 2) AS share
-        FROM inventors i
-        JOIN patent_relationships r ON i.inventor_id = r.inventor_id
-        WHERE i.country IS NOT NULL AND i.country != ''
-        GROUP BY i.country
-        ORDER BY patents DESC
+        SELECT country, patent_count AS patents,
+               ROUND(100.0 * patent_count / (SELECT COUNT(*) FROM patents), 2) AS share
+        FROM temp_country_counts
+        ORDER BY patent_count DESC
         LIMIT 20
     """, conn)
 
@@ -209,6 +281,8 @@ def main():
         return
     conn = sqlite3.connect(DB_PATH)
     try:
+        logger.info("Building aggregation tables (one-time per run; may take several minutes on full data)…")
+        _ensure_temp_counts(conn)
         console_report(conn)
         export_csvs(conn)
         json_report(conn)

@@ -8,7 +8,7 @@
 # ============================================================
 """
 Download and extract the required PatentsView TSV files.
-Downloads 5 zip files, shows progress, extracts into raw_data/.
+Downloads PatentsView zip files (including g_location for inventor countries), shows progress, extracts into raw_data/.
 """
 
 import logging
@@ -29,6 +29,7 @@ FILES = {
     "g_assignee_disambiguated.tsv.zip": "https://s3.amazonaws.com/data.patentsview.org/download/g_assignee_disambiguated.tsv.zip",
     "g_patent_inventor.tsv.zip": "https://s3.amazonaws.com/data.patentsview.org/download/g_patent_inventor.tsv.zip",
     "g_patent_assignee.tsv.zip": "https://s3.amazonaws.com/data.patentsview.org/download/g_patent_assignee.tsv.zip",
+    "g_location_disambiguated.tsv.zip": "https://s3.amazonaws.com/data.patentsview.org/download/g_location_disambiguated.tsv.zip",
 }
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")

@@ -6,12 +6,13 @@
 # Course:  Cloud Computing and Big Data Analytics
 # University: Makerere University
 # ============================================================
-"""
-clean.py
-Clean raw TSV files in chunks, produce normalised CSV tables.
-Processes all rows (millions) using pandas chunksize.
-FIXED: Handles actual column names from USPTO data.
-"""
+# clean.py
+# Clean raw TSV files in chunks, produce normalised CSV tables.
+# Processes all rows (millions) using pandas chunksize.
+# FIXED: Handles actual column names from USPTO data.
+# ENHANCED: Relationship files also processed in chunks.
+# UPDATED: Automatically detects and uses location file (g_location*.tsv) for country mapping.
+# ============================================================
 
 import logging
 from pathlib import Path
@@ -43,11 +44,9 @@ def clean_patents():
         logger.info("clean_patents.csv already exists, skipping.")
         return
 
-    # First, check what columns are available
     sample = pd.read_csv(input_file, sep='\t', nrows=5)
     logger.info(f"Available columns in patents: {sample.columns.tolist()}")
     
-    # Determine column names (handle different naming conventions)
     patent_id_col = None
     title_col = None
     abstract_col = None
@@ -65,7 +64,6 @@ def clean_patents():
             date_col = col
     
     if not patent_id_col:
-        # Try to use first column as ID
         patent_id_col = sample.columns[0]
         logger.warning(f"No patent_id column found, using {patent_id_col}")
     
@@ -79,25 +77,19 @@ def clean_patents():
                       desc="Clean patents"):
         total_rows += len(chunk)
         
-        # Create clean dataframe with standard column names
         clean_chunk = pd.DataFrame()
         clean_chunk['patent_id'] = chunk[patent_id_col] if patent_id_col else None
         clean_chunk['title'] = chunk[title_col] if title_col else "Unknown"
         clean_chunk['abstract'] = chunk[abstract_col] if abstract_col else ""
         clean_chunk['filing_date'] = chunk[date_col] if date_col else None
 
-        # drop rows without patent_id
         clean_chunk = clean_chunk.dropna(subset=["patent_id"])
 
-        # extract year from filing_date
         clean_chunk["filing_date"] = pd.to_datetime(clean_chunk["filing_date"], errors="coerce")
         clean_chunk["year"] = clean_chunk["filing_date"].dt.year
-
-        # remove rows with invalid year
         clean_chunk = clean_chunk.dropna(subset=["year"])
         clean_chunk["year"] = clean_chunk["year"].astype(int)
 
-        # clean text fields
         clean_chunk["title"] = clean_chunk["title"].fillna("Unknown").astype(str).str.strip()
         clean_chunk["abstract"] = clean_chunk["abstract"].fillna("").astype(str).str.strip()
 
@@ -108,8 +100,57 @@ def clean_patents():
     logger.info(f"Patents: processed {total_rows:,} rows, kept {kept_rows:,} rows.")
 
 
+def clean_locations():
+    """Process location file (g_location_disambiguated.tsv or g_location.tsv) -> clean_locations.csv"""
+    # Look for either naming convention
+    loc_candidates = [
+        RAW_DIR / "g_location_disambiguated.tsv",
+        RAW_DIR / "g_location.tsv"
+    ]
+    input_file = None
+    for cand in loc_candidates:
+        if cand.exists():
+            input_file = cand
+            break
+    
+    if not input_file:
+        logger.warning("No location file found (g_location_disambiguated.tsv or g_location.tsv). Countries will be set to 'Unknown'.")
+        return False
+    
+    output_file = CLEAN_DIR / "clean_locations.csv"
+    if output_file.exists():
+        logger.info("clean_locations.csv already exists, skipping.")
+        return True
+
+    logger.info(f"Loading location mapping from {input_file.name}...")
+    try:
+        # Read only necessary columns
+        loc_df = pd.read_csv(input_file, sep='\t', dtype=str)
+        # Try to find location_id and country columns
+        loc_id_col = None
+        country_col = None
+        for col in loc_df.columns:
+            col_lower = col.lower()
+            if 'location_id' in col_lower:
+                loc_id_col = col
+            elif 'country' in col_lower:
+                country_col = col
+        if loc_id_col is None or country_col is None:
+            logger.error(f"Could not find location_id and/or country columns in {input_file.name}. Available: {loc_df.columns.tolist()}")
+            return False
+        loc_df = loc_df[[loc_id_col, country_col]].dropna()
+        loc_df = loc_df.rename(columns={loc_id_col: 'location_id', country_col: 'country'})
+        loc_df = loc_df.drop_duplicates(subset=['location_id'])
+        loc_df.to_csv(output_file, index=False)
+        logger.info(f"Saved location mapping with {len(loc_df):,} unique locations.")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to process location file: {e}")
+        return False
+
+
 def clean_inventors():
-    """g_inventor_disambiguated.tsv -> clean_inventors.csv"""
+    """g_inventor_disambiguated.tsv -> clean_inventors.csv, using location mapping if available."""
     input_file = RAW_DIR / "g_inventor_disambiguated.tsv"
     output_file = CLEAN_DIR / "clean_inventors.csv"
     
@@ -121,15 +162,23 @@ def clean_inventors():
         logger.info("clean_inventors.csv already exists, skipping.")
         return
 
-    # Check what columns are available
+    # Load location mapping if available
+    loc_file = CLEAN_DIR / "clean_locations.csv"
+    location_map = {}
+    if loc_file.exists():
+        loc_df = pd.read_csv(loc_file)
+        location_map = dict(zip(loc_df['location_id'], loc_df['country']))
+        logger.info(f"Loaded {len(location_map):,} location‑to‑country mappings.")
+    else:
+        logger.warning("No location mapping available. All countries will be set to 'Unknown'.")
+
     sample = pd.read_csv(input_file, sep='\t', nrows=5)
     logger.info(f"Available columns in inventors: {sample.columns.tolist()}")
     
-    # Determine column names
     inventor_id_col = None
     first_name_col = None
     last_name_col = None
-    country_col = None
+    location_id_col = None
     
     for col in sample.columns:
         col_lower = col.lower()
@@ -139,17 +188,16 @@ def clean_inventors():
             first_name_col = col
         elif 'last' in col_lower or 'family' in col_lower or 'surname' in col_lower:
             last_name_col = col
-        elif 'country' in col_lower:
-            country_col = col
+        elif 'location_id' in col_lower:
+            location_id_col = col
     
     if not inventor_id_col:
-        # Try to find any ID column
         for col in sample.columns:
             if 'id' in col.lower():
                 inventor_id_col = col
                 break
     
-    logger.info(f"Mapping: inventor_id={inventor_id_col}, first={first_name_col}, last={last_name_col}, country={country_col}")
+    logger.info(f"Mapping: inventor_id={inventor_id_col}, first={first_name_col}, last={last_name_col}, location_id={location_id_col}")
     
     total_rows = 0
     kept_rows = 0
@@ -174,10 +222,13 @@ def clean_inventors():
             
         clean_chunk['name'] = clean_chunk['name'].str.strip()
         
-        # country
-        clean_chunk['country'] = chunk[country_col] if country_col else "Unknown"
+        # get country from location_id using mapping
+        if location_id_col and location_map:
+            loc_ids = chunk[location_id_col].fillna("").astype(str)
+            clean_chunk['country'] = loc_ids.map(lambda x: location_map.get(x, "Unknown"))
+        else:
+            clean_chunk['country'] = "Unknown"
         
-        # drop rows with no inventor_id or name
         clean_chunk = clean_chunk.dropna(subset=["inventor_id", "name"])
         clean_chunk = clean_chunk[clean_chunk["name"] != ""]
 
@@ -201,11 +252,9 @@ def clean_companies():
         logger.info("clean_companies.csv already exists, skipping.")
         return
 
-    # Check what columns are available
     sample = pd.read_csv(input_file, sep='\t', nrows=5)
     logger.info(f"Available columns in companies: {sample.columns.tolist()}")
     
-    # Determine column names
     company_id_col = None
     name_col = None
     
@@ -217,7 +266,6 @@ def clean_companies():
             name_col = col
     
     if not company_id_col:
-        # Try to use first column as ID
         company_id_col = sample.columns[0]
         logger.warning(f"No company_id column found, using {company_id_col}")
     
@@ -248,7 +296,6 @@ def clean_companies():
 
 def clean_relationships():
     """Join patent_inventor and patent_assignee -> clean_relationships.csv"""
-    # Look for relationship files (could have different names)
     inv_file_candidates = [
         RAW_DIR / "g_patent_inventor_disambiguated.tsv",
         RAW_DIR / "g_patent_inventor.tsv",
@@ -288,39 +335,55 @@ def clean_relationships():
     if ass_file:
         logger.info(f"Using assignee relationships: {ass_file.name}")
 
-    # Load all patent-inventor links
-    inv_df = pd.read_csv(inv_file, sep="\t")
-    # Find correct column names
-    patent_col = 'patent_id' if 'patent_id' in inv_df.columns else inv_df.columns[0]
-    inventor_col = 'inventor_id' if 'inventor_id' in inv_df.columns else inv_df.columns[1]
-    
-    inv_df = inv_df.rename(columns={patent_col: 'patent_id', inventor_col: 'inventor_id'})
-    inv_df = inv_df[['patent_id', 'inventor_id']].dropna()
+    inv_sample = pd.read_csv(inv_file, sep='\t', nrows=5)
+    patent_col = 'patent_id' if 'patent_id' in inv_sample.columns else inv_sample.columns[0]
+    inventor_col = 'inventor_id' if 'inventor_id' in inv_sample.columns else inv_sample.columns[1]
 
-    # Load assignee relationships if available
+    total_inv_rows = sum(1 for _ in open(inv_file)) - 1
+    logger.info(f"Processing {total_inv_rows:,} inventor relationship rows in chunks of {CHUNKSIZE}")
+
+    first_chunk = True
+    total_merged_rows = 0
+
     if ass_file:
-        ass_df = pd.read_csv(ass_file, sep="\t")
+        logger.info("Loading assignee relationships into memory...")
+        ass_df = pd.read_csv(ass_file, sep='\t')
         patent_col2 = 'patent_id' if 'patent_id' in ass_df.columns else ass_df.columns[0]
         assignee_col = 'assignee_id' if 'assignee_id' in ass_df.columns else ass_df.columns[1]
-        
         ass_df = ass_df.rename(columns={patent_col2: 'patent_id', assignee_col: 'company_id'})
         ass_df = ass_df[['patent_id', 'company_id']].dropna()
-        
-        # Merge
-        merged = inv_df.merge(ass_df, on="patent_id", how="left")
-    else:
-        merged = inv_df.copy()
-        merged['company_id'] = None
+        assignee_dict = dict(zip(ass_df['patent_id'], ass_df['company_id']))
+        logger.info(f"Loaded {len(assignee_dict):,} assignee mappings.")
 
-    merged.to_csv(out_file, index=False)
-    logger.info(f"Relationships: {len(merged):,} rows")
+        for chunk in tqdm(pd.read_csv(inv_file, sep='\t', chunksize=CHUNKSIZE),
+                          total=(total_inv_rows // CHUNKSIZE) + 1,
+                          desc="Building relationships"):
+            chunk = chunk.rename(columns={patent_col: 'patent_id', inventor_col: 'inventor_id'})
+            chunk = chunk[['patent_id', 'inventor_id']].dropna()
+            chunk['company_id'] = chunk['patent_id'].map(assignee_dict)
+            chunk.to_csv(out_file, mode='a', header=first_chunk, index=False)
+            total_merged_rows += len(chunk)
+            first_chunk = False
+    else:
+        for chunk in tqdm(pd.read_csv(inv_file, sep='\t', chunksize=CHUNKSIZE),
+                          total=(total_inv_rows // CHUNKSIZE) + 1,
+                          desc="Copying inventor relationships"):
+            chunk = chunk.rename(columns={patent_col: 'patent_id', inventor_col: 'inventor_id'})
+            chunk = chunk[['patent_id', 'inventor_id']].dropna()
+            chunk['company_id'] = None
+            chunk.to_csv(out_file, mode='a', header=first_chunk, index=False)
+            total_merged_rows += len(chunk)
+            first_chunk = False
+
+    logger.info(f"Relationships: {total_merged_rows:,} rows saved to {out_file}")
 
 
 def main():
-    """Run all cleaning steps in order."""
     logger.info("Starting data cleaning (chunked processing).")
     clean_patents()
-    clean_inventors()
+    # Process location file to get country mapping
+    clean_locations()
+    clean_inventors()   # will use the mapping if available
     clean_companies()
     clean_relationships()
     logger.info("Cleaning completed.")

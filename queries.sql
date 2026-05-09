@@ -79,16 +79,20 @@ LIMIT 50;
 
 -- Q7: Ranking Query (window function: rank inventors within each country)
 -----------------------------------------
-SELECT
-    country, name, patent_count,
-    RANK() OVER (PARTITION BY country ORDER BY patent_count DESC) AS country_rank
-FROM (
+WITH inventor_stats AS (
     SELECT i.country, i.name,
            COUNT(DISTINCT r.patent_id) AS patent_count
     FROM inventors i
     JOIN patent_relationships r ON i.inventor_id = r.inventor_id
     WHERE i.country IS NOT NULL AND i.country != ''
     GROUP BY i.inventor_id
-) sub
+),
+ranked AS (
+    SELECT country, name, patent_count,
+           RANK() OVER (PARTITION BY country ORDER BY patent_count DESC) AS country_rank
+    FROM inventor_stats
+)
+SELECT country, name, patent_count, country_rank
+FROM ranked
 WHERE country_rank <= 5
-ORDER BY patent_count DESC;
+ORDER BY country, country_rank;

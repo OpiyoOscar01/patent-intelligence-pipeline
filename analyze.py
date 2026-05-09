@@ -11,26 +11,174 @@
 analyze.py
 ULTRA-FAST: Pre-computed patent analytics using materialized views.
 Runs in seconds instead of minutes.
+FIXED: Disk I/O error by using in-memory database for temp tables
 """
 
 import sqlite3
 import time
+import os
+import sys
 from pathlib import Path
 
 import pandas as pd
 from tabulate import tabulate
 
 DB_PATH = Path("patents.db")
+OUTPUT_DIR = Path("outputs")
+OUTPUT_DIR.mkdir(exist_ok=True)
+
+
+def check_disk_space(path="."):
+    """Check available disk space."""
+    try:
+        if sys.platform == 'win32':
+            import ctypes
+            free_bytes = ctypes.c_ulonglong(0)
+            ctypes.windll.kernel32.GetDiskFreeSpaceExW(
+                str(path), None, None, ctypes.pointer(free_bytes)
+            )
+            free_gb = free_bytes.value / (1024**3)
+        else:
+            import shutil
+            stat = shutil.disk_usage(path)
+            free_gb = stat.free / (1024**3)
+        
+        print(f"   💾 Available disk space: {free_gb:.2f} GB")
+        return free_gb > 0.5  # Need at least 500MB free
+    except:
+        return True  # Assume OK if can't check
 
 
 def run_query(conn, sql, description):
     """Run query with timing."""
     print(f"   ⏳ {description}...", end='', flush=True)
     start = time.time()
-    df = pd.read_sql_query(sql, conn)
-    elapsed = time.time() - start
-    print(f" Done in {elapsed:.2f}s ({len(df):,} rows)")
-    return df
+    try:
+        df = pd.read_sql_query(sql, conn)
+        elapsed = time.time() - start
+        print(f" Done in {elapsed:.2f}s ({len(df):,} rows)")
+        return df
+    except sqlite3.OperationalError as e:
+        print(f" Failed: {e}")
+        return pd.DataFrame()
+
+
+def create_connection():
+    """Create database connection with optimized settings."""
+    # Check if database exists
+    if not DB_PATH.exists():
+        print(f"\n❌ Database not found: {DB_PATH}")
+        print("   Please run 'python etl.py' first to create the database.")
+        sys.exit(1)
+    
+    # Check disk space
+    if not check_disk_space(DB_PATH.parent):
+        print("\n⚠️  WARNING: Low disk space! Consider freeing up space.")
+    
+    # Connect with optimized settings to reduce I/O
+    conn = sqlite3.connect(str(DB_PATH), timeout=30.0)
+    
+    # Optimize SQLite for better I/O performance
+    conn.execute("PRAGMA journal_mode = WAL")  # Write-Ahead Logging
+    conn.execute("PRAGMA synchronous = NORMAL")  # Faster writes
+    conn.execute("PRAGMA cache_size = 10000")  # Larger cache
+    conn.execute("PRAGMA temp_store = MEMORY")  # Store temp tables in memory (KEY FIX!)
+    conn.execute("PRAGMA mmap_size = 30000000000")  # 30GB memory mapping
+    
+    return conn
+
+
+def create_temp_tables_alternative(conn):
+    """
+    Alternative: Create regular tables instead of TEMP tables.
+    This avoids disk I/O if TEMP tables are problematic.
+    """
+    print("\n📊 Creating aggregation tables (one-time setup)...")
+    
+    try:
+        # Try with TEMP tables first (faster but might fail)
+        conn.execute("PRAGMA temp_store = MEMORY")  # Force memory storage
+        
+        # View 1: Inventor patent counts
+        conn.execute("DROP TABLE IF EXISTS temp_inventor_counts")
+        conn.execute("""
+            CREATE TEMP TABLE temp_inventor_counts AS
+            SELECT 
+                inventor_id,
+                COUNT(patent_id) as patent_count
+            FROM patent_relationships
+            GROUP BY inventor_id
+        """)
+        print("   ✓ Created inventor counts table (in-memory)")
+        
+        # View 2: Company patent counts
+        conn.execute("DROP TABLE IF EXISTS temp_company_counts")
+        conn.execute("""
+            CREATE TEMP TABLE temp_company_counts AS
+            SELECT 
+                company_id,
+                COUNT(patent_id) as patent_count
+            FROM patent_relationships
+            WHERE company_id IS NOT NULL
+            GROUP BY company_id
+        """)
+        print("   ✓ Created company counts table (in-memory)")
+        
+        # View 3: Country patent counts
+        conn.execute("DROP TABLE IF EXISTS temp_country_counts")
+        conn.execute("""
+            CREATE TEMP TABLE temp_country_counts AS
+            SELECT 
+                i.country,
+                COUNT(DISTINCT r.patent_id) as patent_count
+            FROM inventors i
+            JOIN patent_relationships r ON i.inventor_id = r.inventor_id
+            WHERE i.country IS NOT NULL AND i.country != '' AND i.country != 'Unknown'
+            GROUP BY i.country
+        """)
+        print("   ✓ Created country counts table (in-memory)")
+        
+        return True
+        
+    except sqlite3.OperationalError as e:
+        print(f"   ⚠️  TEMP table failed: {e}")
+        print("   🔄 Falling back to persistent tables...")
+        
+        # Fallback: Use regular tables instead of TEMP (slower but works)
+        try:
+            conn.execute("DROP TABLE IF EXISTS persistent_inventor_counts")
+            conn.execute("""
+                CREATE TABLE persistent_inventor_counts AS
+                SELECT inventor_id, COUNT(patent_id) as patent_count
+                FROM patent_relationships
+                GROUP BY inventor_id
+            """)
+            
+            conn.execute("DROP TABLE IF EXISTS persistent_company_counts")
+            conn.execute("""
+                CREATE TABLE persistent_company_counts AS
+                SELECT company_id, COUNT(patent_id) as patent_count
+                FROM patent_relationships
+                WHERE company_id IS NOT NULL
+                GROUP BY company_id
+            """)
+            
+            conn.execute("DROP TABLE IF EXISTS persistent_country_counts")
+            conn.execute("""
+                CREATE TABLE persistent_country_counts AS
+                SELECT i.country, COUNT(DISTINCT r.patent_id) as patent_count
+                FROM inventors i
+                JOIN patent_relationships r ON i.inventor_id = r.inventor_id
+                WHERE i.country IS NOT NULL AND i.country != '' AND i.country != 'Unknown'
+                GROUP BY i.country
+            """)
+            
+            print("   ✓ Created persistent tables (fallback mode)")
+            return True
+            
+        except sqlite3.OperationalError as e2:
+            print(f"   ❌ Failed even with persistent tables: {e2}")
+            return False
 
 
 def main():
@@ -40,60 +188,24 @@ def main():
     print("   Author: Opiyo Oscar (2300701330)")
     print("   Using pre-computed aggregations")
     
-    conn = sqlite3.connect(str(DB_PATH))
+    # Create connection with optimizations
+    conn = create_connection()
     
-    # Create temporary materialized views for fast queries
-    print("\n📊 Creating temporary aggregation tables (one-time setup)...")
-    
-    # View 1: Inventor patent counts (pre-computed)
-    conn.execute("""
-        DROP TABLE IF EXISTS temp_inventor_counts
-    """)
-    conn.execute("""
-        CREATE TEMP TABLE temp_inventor_counts AS
-        SELECT 
-            inventor_id,
-            COUNT(patent_id) as patent_count
-        FROM patent_relationships
-        GROUP BY inventor_id
-    """)
-    print("   ✓ Created inventor counts table")
-    
-    # View 2: Company patent counts (pre-computed)
-    conn.execute("""
-        DROP TABLE IF EXISTS temp_company_counts
-    """)
-    conn.execute("""
-        CREATE TEMP TABLE temp_company_counts AS
-        SELECT 
-            company_id,
-            COUNT(patent_id) as patent_count
-        FROM patent_relationships
-        WHERE company_id IS NOT NULL
-        GROUP BY company_id
-    """)
-    print("   ✓ Created company counts table")
-    
-    # View 3: Country patent counts (pre-computed)
-    conn.execute("""
-        DROP TABLE IF EXISTS temp_country_counts
-    """)
-    conn.execute("""
-        CREATE TEMP TABLE temp_country_counts AS
-        SELECT 
-            i.country,
-            COUNT(DISTINCT r.patent_id) as patent_count
-        FROM inventors i
-        JOIN patent_relationships r ON i.inventor_id = r.inventor_id
-        WHERE i.country IS NOT NULL AND i.country != '' AND i.country != 'Unknown'
-        GROUP BY i.country
-    """)
-    print("   ✓ Created country counts table")
+    # Create aggregation tables (automatically handles I/O errors)
+    if not create_temp_tables_alternative(conn):
+        print("\n❌ Failed to create aggregation tables.")
+        print("   Possible solutions:")
+        print("   1. Check available disk space")
+        print("   2. Run as administrator")
+        print("   3. Move patents.db to local drive (C:)")
+        print("   4. Disable anti-virus temporarily")
+        conn.close()
+        sys.exit(1)
     
     results = {}
     
     # ============================================================
-    # Q1: Top Inventors (ULTRA FAST - uses pre-computed table)
+    # Q1: Top Inventors
     # ============================================================
     print("\n" + "─"*60)
     print("🚀 Q1: Top Inventors")
@@ -114,7 +226,7 @@ def main():
         print(tabulate(results['q1'].head(10), headers='keys', tablefmt='simple', showindex=False))
     
     # ============================================================
-    # Q2: Top Companies (ULTRA FAST)
+    # Q2: Top Companies
     # ============================================================
     print("\n" + "─"*60)
     print("🚀 Q2: Top Companies")
@@ -134,7 +246,7 @@ def main():
         print(tabulate(results['q2'].head(10), headers='keys', tablefmt='simple', showindex=False))
     
     # ============================================================
-    # Q3: Top Countries (ULTRA FAST)
+    # Q3: Top Countries
     # ============================================================
     print("\n" + "─"*60)
     print("🚀 Q3: Top Countries")
@@ -156,7 +268,7 @@ def main():
         print(tabulate(results['q3'].head(10), headers='keys', tablefmt='simple', showindex=False))
     
     # ============================================================
-    # Q4: Yearly Trends (direct query - uses index)
+    # Q4: Yearly Trends
     # ============================================================
     print("\n" + "─"*60)
     print("🚀 Q4: Yearly Patent Trends")
@@ -176,7 +288,7 @@ def main():
         print(tabulate(results['q4'].head(15), headers='keys', tablefmt='simple', showindex=False))
     
     # ============================================================
-    # Q5: JOIN Query (limited rows)
+    # Q5: JOIN Query
     # ============================================================
     print("\n" + "─"*60)
     print("🚀 Q5: Sample Patent Data (JOIN)")
@@ -200,7 +312,7 @@ def main():
         print(tabulate(results['q5'].head(10), headers='keys', tablefmt='simple', showindex=False))
     
     # ============================================================
-    # Q6: CTE Query (uses pre-computed)
+    # Q6: CTE Query
     # ============================================================
     print("\n" + "─"*60)
     print("🚀 Q6: Prolific Inventors (CTE)")
@@ -214,7 +326,7 @@ def main():
                 c.patent_count
             FROM temp_inventor_counts c
             JOIN inventors i ON c.inventor_id = i.inventor_id
-            WHERE c.patent_count >= 100
+            WHERE c.patent_count >= 50
         )
         SELECT * FROM prolific
         ORDER BY patent_count DESC
@@ -256,6 +368,14 @@ def main():
     if not results['q7'].empty:
         print(tabulate(results['q7'].head(15), headers='keys', tablefmt='simple', showindex=False))
     
+    # Clean up temp tables (optional)
+    try:
+        conn.execute("DROP TABLE IF EXISTS temp_inventor_counts")
+        conn.execute("DROP TABLE IF EXISTS temp_company_counts")
+        conn.execute("DROP TABLE IF EXISTS temp_country_counts")
+    except:
+        pass
+    
     # ============================================================
     # SUMMARY
     # ============================================================
@@ -267,20 +387,21 @@ def main():
         print(f"   {status} {key.upper()}: {len(df):,} rows")
     
     # Save results
-    import pickle
-    with open("query_results.pkl", "wb") as f:
-        pickle.dump(results, f)
-    print(f"\n💾 Results saved to: query_results.pkl")
+    if any(not df.empty for df in results.values()):
+        import pickle
+        with open("query_results.pkl", "wb") as f:
+            pickle.dump(results, f)
+        print(f"\n💾 Results saved to: query_results.pkl")
     
     # Export CSVs
     if not results.get('q1', pd.DataFrame()).empty:
-        results['q1'].to_csv("top_inventors.csv", index=False)
+        results['q1'].to_csv(OUTPUT_DIR / "analyze_top_inventors_sample.csv", index=False)
     if not results.get('q2', pd.DataFrame()).empty:
-        results['q2'].to_csv("top_companies.csv", index=False)
+        results['q2'].to_csv(OUTPUT_DIR / "analyze_top_companies_sample.csv", index=False)
     if not results.get('q4', pd.DataFrame()).empty:
-        results['q4'].to_csv("yearly_trends.csv", index=False)
+        results['q4'].to_csv(OUTPUT_DIR / "analyze_yearly_trends_sample.csv", index=False)
     
-    print(f"\n💾 Exports saved: top_inventors.csv, top_companies.csv, yearly_trends.csv")
+    print(f"\n💾 Sample exports saved under {OUTPUT_DIR}/")
     
     conn.close()
     

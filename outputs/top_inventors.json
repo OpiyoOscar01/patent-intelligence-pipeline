@@ -1,0 +1,102 @@
+[
+  {
+    "name":"Shunpei Yamazaki",
+    "country":"JP",
+    "patent_count":5663
+  },
+  {
+    "name":"Shunpei Yamazaki",
+    "country":"US",
+    "patent_count":5663
+  },
+  {
+    "name":"Kia Silverbrook",
+    "country":"AU",
+    "patent_count":3972
+  },
+  {
+    "name":"Kia Silverbrook",
+    "country":"AT",
+    "patent_count":3972
+  },
+  {
+    "name":"Kia Silverbrook",
+    "country":"Unknown",
+    "patent_count":3972
+  },
+  {
+    "name":"Tao Luo",
+    "country":"US",
+    "patent_count":3617
+  },
+  {
+    "name":"Tao Luo",
+    "country":"KR",
+    "patent_count":3617
+  },
+  {
+    "name":"Tao Luo",
+    "country":"CN",
+    "patent_count":3617
+  },
+  {
+    "name":"Tao Luo",
+    "country":"FR",
+    "patent_count":3617
+  },
+  {
+    "name":"Tao Luo",
+    "country":"SG",
+    "patent_count":3617
+  },
+  {
+    "name":"Tao Luo",
+    "country":"Unknown",
+    "patent_count":3617
+  },
+  {
+    "name":"Jonathan P. Ive",
+    "country":"US",
+    "patent_count":2350
+  },
+  {
+    "name":"Jonathan P. Ive",
+    "country":"CA",
+    "patent_count":2350
+  },
+  {
+    "name":"Junyi Li",
+    "country":"US",
+    "patent_count":2317
+  },
+  {
+    "name":"Junyi Li",
+    "country":"CN",
+    "patent_count":2317
+  },
+  {
+    "name":"Junyi Li",
+    "country":"CA",
+    "patent_count":2317
+  },
+  {
+    "name":"Kangguo Cheng",
+    "country":"US",
+    "patent_count":2306
+  },
+  {
+    "name":"Frederick E. Shelton, IV",
+    "country":"US",
+    "patent_count":2204
+  },
+  {
+    "name":"Peter Gaal",
+    "country":"US",
+    "patent_count":2129
+  },
+  {
+    "name":"Duncan Robert Kerr",
+    "country":"US",
+    "patent_count":2078
+  }
+]
