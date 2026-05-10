@@ -1,0 +1,37 @@
+PATENT ANALYSIS CONSOLE REPORT
+================================================================================
+Generated on: 2026-05-09 17:59:13
+================================================================================
+
+1. PATENT TRENDS SUMMARY
+--------------------------------------------------
+Period Covered: 1976 to 2025
+Total Patents (Overall): 9,361,444
+Average Patents per Year: 187,229
+Year with Most Patents: 2019 (392,618)
+Year with Fewest Patents: 1979 (52,484)
+
+2. TOP INVENTORS
+--------------------------------------------------
+Shunpei Yamazaki                  5,663 patents
+Kia Silverbrook                   3,972 patents
+Tao Luo                           3,617 patents
+Jonathan P. Ive                   2,350 patents
+Junyi Li                          2,317 patents
+Kangguo Cheng                     2,306 patents
+Frederick E. Shelton, IV          2,204 patents
+Peter Gaal                        2,129 patents
+Duncan Robert Kerr                2,078 patents
+
+3. TOP COMPANIES
+--------------------------------------------------
+SAMSUNG ELECTRONICS CO., LTD.               110,315 patents
+International Business Machines Corporat    104,905 patents
+Canon Kabushiki Kaisha                       57,747 patents
+SONY GROUP CORPORATION                       39,939 patents
+FUJITSU LIMITED                              35,954 patents
+Kabushiki Kaisha Toshiba                     34,086 patents
+Intel Corporation                            33,759 patents
+General Electric Company                     33,220 patents
+LG ELECTRONICS INC.                          31,665 patents
+HITACHI, LTD.                                29,899 patents

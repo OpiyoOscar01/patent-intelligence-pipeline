@@ -4,3 +4,4 @@ clean_data/
 generate_outputs.py
 patents.db
 console_report.py
+generate_patent_analysis_demo.py
